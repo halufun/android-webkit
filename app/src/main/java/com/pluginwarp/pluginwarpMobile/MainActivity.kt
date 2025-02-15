@@ -23,6 +23,10 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activitymain)
 
         val webView = findViewById<WebView>(R.id.webview)
+
+        // Disable caching
+        webView.settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+        webView.settings.domStorageEnabled = false
         webView.settings.javaScriptEnabled = true
         // Allow access to local files
         webView.settings.allowFileAccess = true
