@@ -1,19 +1,24 @@
 package com.pluginwarp.pluginwarpMobile
 
 import android.app.DownloadManager
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
+import android.media.MediaScannerConnection
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.MediaStore
 import android.webkit.*
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.net.toUri
 import java.io.File
 import java.io.FileOutputStream
-import java.io.IOException
-import kotlin.io.encoding.Base64
-import kotlin.io.encoding.ExperimentalEncodingApi
+import android.webkit.WebChromeClient
+import android.webkit.ConsoleMessage
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -74,32 +79,83 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        var messageName = "extension"
+        // Set up WebChromeClient to capture console messages
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: ConsoleMessage?): Boolean {
+                // Capture and log the console messages from JavaScript
+                if (message != null) {
+                    val sourceId = message.sourceId()
+                    val messageText = message.message()
 
-        // Inject JavaScript Interface
-        webView.addJavascriptInterface(WebAppInterface(this), "Android")
+                    if (sourceId.contains("ExtensionDownloader.js") && messageText.startsWith("https:")) {
+                        messageName = messageText.substringAfterLast("/")
+                    }
+
+                    // Filter out anything that isn't from ExtensionDownloader.js
+                    if (sourceId.contains("ExtensionDownloader.js") && !messageText.startsWith("https:")) {
+                        // Download the message as a .js file
+                        downloadStringAs(this@MainActivity, messageName, messageText)
+                    }
+                }
+                return super.onConsoleMessage(message)
+            }
+        }
+
+
 
         // Load the URL
         webView.loadUrl(REMOTE_URL)
     }
 
-    // Function to download a blob (base64 encoded)
-    @OptIn(ExperimentalEncodingApi::class)
-    fun downloadBase64Blob(blobData: String, context: Context) {
-        // Decode the base64 data to bytes
-        val decodedBytes = Base64.decode(blobData, 0, blobData.length)
 
-        // Save the decoded data to a file
-        val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "downloaded_blob_file")
+
+
+
+    // Function to download the string as a .js file (Android 7+)
+    fun downloadStringAs(context: Context, name: String, content: String) {
+        // Create a file name (for example: console_message.txt)
+        val fileName = name
+        val filetype = "js"
+
+        // Get the public Downloads directory
+        val downloadsFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        if (!downloadsFolder.exists()) {
+            downloadsFolder.mkdirs()
+        }
+
+        // Create the file and write the content to it
+        val file = File(downloadsFolder, fileName)
         try {
-            val outputStream = FileOutputStream(file)
-            outputStream.write(decodedBytes)
-            outputStream.close()
+            file.writeText(content)
 
-            // Notify the user that the file has been downloaded
-            Toast.makeText(context, "Blob download completed", Toast.LENGTH_SHORT).show()
-        } catch (e: IOException) {
+            // Optionally, notify the media scanner about the new file so that it shows up in Downloads apps immediately
+            MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), null, null)
+
+            // Determine a basic MIME type based on the file extension.
+            val mimeType = when (filetype.lowercase(Locale.getDefault())) {
+                "txt"  -> "text/plain"
+                "html" -> "text/html"
+                "json" -> "application/json"
+                else   -> "*/*"
+            }
+
+            // Add the file as a completed download to the system DownloadManager
+            val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            downloadManager.addCompletedDownload(
+                fileName,                   // Title
+                "Downloaded using the app", // Description
+                true,                       // Scannable by media scanner
+                mimeType,                   // MIME type
+                file.absolutePath,          // File path
+                file.length(),              // File size in bytes
+                true                        // Show in the system's Downloads UI
+            )
+
+            Toast.makeText(context, "File downloaded: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
             e.printStackTrace()
-            Toast.makeText(context, "Error downloading blob", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Error saving file: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -112,14 +168,5 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // JavaScript Interface class
-    class WebAppInterface(private val context: Context) {
 
-        // This method is called from JavaScript to send the blob data
-        @JavascriptInterface
-        fun onBlobReceived(blobData: String) {
-            // Handle the base64 data received from the blob URL
-            (context as MainActivity).downloadBase64Blob(blobData, context)
-        }
-    }
 }
